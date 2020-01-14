@@ -1398,7 +1398,7 @@ class JSCodeGen()(implicit ctx: Context) {
       genJSSuperCall(tree, isStat)
     } else*/ {
       if (sym.owner.isAllOf(Scala2x | Trait) && sym.isConstructor) {
-        // calling genApplyMethodStatically will genereate a method with one argumetn for `this`, so we do it manually a zero-argument method
+        // calling genApplyMethodStatically will genereate a method with one argument for `this`, so we do it manually a zero-argument method
         assert(args.size == 0)
         val sym0 = sym.owner.info.decl(nme.TRAIT_CONSTRUCTOR).symbol.name.mangledString
         val methodIdent = js.MethodIdent(MethodName(SimpleMethodName(sym0), List.empty, jstpe.VoidRef, false))
