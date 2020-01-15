@@ -1394,33 +1394,22 @@ class JSCodeGen()(implicit ctx: Context) {
     if (sym == defn.Any_getClass) {
       // The only primitive that is also callable as super call
       js.GetClass(genThis())
-    } else /*if (isScalaJSDefinedJSClass(currentClassSym)) {
+    /* } else if (isScalaJSDefinedJSClass(currentClassSym)) {
       genJSSuperCall(tree, isStat)
-    } else*/ {
-      if (sym.owner.isAllOf(Scala2x | Trait) && sym.isConstructor) {
-        // calling genApplyMethodStatically will genereate a method with one argument for `this`, so we do it manually a zero-argument method
-        assert(args.size == 0)
-        val sym0 = sym.owner.info.decl(nme.TRAIT_CONSTRUCTOR).symbol.name.mangledString
-        val methodIdent = js.MethodIdent(MethodName(SimpleMethodName(sym0), List.empty, jstpe.VoidRef, false))
-        js.ApplyStatically(
-          js.ApplyFlags.empty, genThis()(sup.span),
-          encodeClassName(sym.owner),
-          methodIdent,
-          List.empty)(toIRType(defn.UnitType))
+     */
+    } else {
+      val superCall = genApplyMethodStatically(
+          genThis()(sup.span), sym, genActualArgs(sym, args))
+      // Initialize the module instance just after the super constructor call.
+      if (isStaticModule(currentClassSym) && !isModuleInitialized &&
+          currentMethodSym.get.isClassConstructor) {
+        isModuleInitialized = true
+        val className = encodeClassName(currentClassSym)
+         val thisType = jstpe.ClassType(className)
+        val initModule = js.StoreModule(className, js.This()(thisType))
+        js.Block(superCall, initModule)
       } else {
-        val superCall = genApplyMethodStatically(
-            genThis()(sup.span), sym, genActualArgs(sym, args))
-        // Initialize the module instance just after the super constructor call.
-        if (isStaticModule(currentClassSym) && !isModuleInitialized &&
-            currentMethodSym.get.isClassConstructor) {
-          isModuleInitialized = true
-          val className = encodeClassName(currentClassSym)
-          val thisType = jstpe.ClassType(className)
-          val initModule = js.StoreModule(className, js.This()(thisType))
-          js.Block(superCall, initModule)
-        } else {
-          superCall
-        }
+        superCall
       }
     }
   }
