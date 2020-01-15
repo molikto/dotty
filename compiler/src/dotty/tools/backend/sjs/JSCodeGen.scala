@@ -1394,10 +1394,9 @@ class JSCodeGen()(implicit ctx: Context) {
     if (sym == defn.Any_getClass) {
       // The only primitive that is also callable as super call
       js.GetClass(genThis())
-    /* } else if (isScalaJSDefinedJSClass(currentClassSym)) {
+    } else /*if (isScalaJSDefinedJSClass(currentClassSym)) {
       genJSSuperCall(tree, isStat)
-     */
-    } else {
+    } else*/ {
       val superCall = genApplyMethodStatically(
           genThis()(sup.span), sym, genActualArgs(sym, args))
       // Initialize the module instance just after the super constructor call.
@@ -1405,7 +1404,7 @@ class JSCodeGen()(implicit ctx: Context) {
           currentMethodSym.get.isClassConstructor) {
         isModuleInitialized = true
         val className = encodeClassName(currentClassSym)
-         val thisType = jstpe.ClassType(className)
+        val thisType = jstpe.ClassType(className)
         val initModule = js.StoreModule(className, js.This()(thisType))
         js.Block(superCall, initModule)
       } else {
