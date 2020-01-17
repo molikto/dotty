@@ -162,7 +162,7 @@ object Flags {
   private inline val KINDFLAGS = TERMS | TYPES
 
   private inline val FirstFlag = 2
-  private inline val FirstNotPickledFlag = 48
+  private inline val FirstNotPickledFlag = 45
   private inline val MaxFlag = 63
 
   private val flagName = Array.fill(64, 2)("")
@@ -351,6 +351,7 @@ object Flags {
   val (Opaque @ _, _, _) = newFlags(43, "opaque")
 
 
+
   // ------------ Flags following this one are not pickled ----------------------------------
 
   /** Symbol is not a member of its owner */
@@ -358,6 +359,9 @@ object Flags {
 
   /** Denotation is in train of being loaded and completed, used to catch cyclic dependencies */
   val (Touched @ _, _, _) = newFlags(48, "<touched>")
+
+  /** A class loaded from class file or Java source code that has no public access flag */
+  val (JavaPackageAccess @ _, _, _) = newFlags(49, "java-package-private")
 
   /** Class has been lifted out to package level, local value has been lifted out to class level */
   val (Lifted @ _, _, _) = newFlags(51, "<lifted>")

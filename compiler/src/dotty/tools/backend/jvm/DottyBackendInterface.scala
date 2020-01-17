@@ -691,6 +691,7 @@ class DottyBackendInterface(outputDirectory: AbstractFile, val superCallsMap: Ma
     def isDeprecated: Boolean = false
     def isMutable: Boolean = sym.is(Flags.Mutable)
     def hasAbstractFlag: Boolean = sym.isOneOf(Flags.AbstractOrTrait)
+    def hasJavaPackageAccessFlag: Boolean = sym.isOneOf(Flags.JavaPackageAccess)
     def hasModuleFlag: Boolean = sym.is(Flags.Module)
     def isSynchronized: Boolean = sym.is(Flags.Synchronized)
     def isNonBottomSubClass(other: Symbol): Boolean = sym.derivesFrom(other)

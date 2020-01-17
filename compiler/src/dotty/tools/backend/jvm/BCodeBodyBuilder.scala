@@ -33,8 +33,11 @@ trait BCodeBodyBuilder extends BCodeSkelBuilder {
      *  it is the host class; otherwise the symbol's owner.
      */
     def findHostClass(selector: Type, sym: Symbol) = selector member sym.name match {
-      case NoSymbol   => debuglog(s"Rejecting $selector as host class for $sym") ; sym.owner
-      case _          => selector.typeSymbol
+      case NoSymbol if !sym.owner.hasJavaPackageAccessFlag  =>
+        debuglog(s"Rejecting $selector as host class for $sym")
+        sym.owner
+      case _          =>
+        selector.typeSymbol
     }
 
     /* ---------------- helper utils for generating methods and code ---------------- */
@@ -65,12 +68,13 @@ trait BCodeBodyBuilder extends BCodeSkelBuilder {
       lineNumber(tree)
 
       tree match {
-        case Assign(lhs @ Select(_, _), rhs) =>
+        case Assign(lhs @ Select(qual, _), rhs) =>
           val isStatic = lhs.symbol.isStaticMember
           if (!isStatic) { genLoadQualifier(lhs) }
           genLoad(rhs, symInfoTK(lhs.symbol))
           lineNumber(tree)
-          fieldStore(lhs.symbol)
+          val host = findHostClass(qual.tpe, lhs.symbol)
+          fieldStore(lhs.symbol, host)
 
         case Assign(lhs, rhs) =>
           val s = lhs.symbol
@@ -784,9 +788,6 @@ trait BCodeBodyBuilder extends BCodeSkelBuilder {
 
               genLoadArguments(args, paramTKs(app))
 
-              // In "a couple cases", squirrel away a extra information (hostClass, targetTypeKind). TODO Document what "in a couple cases" refers to.
-              var hostClass:      Symbol = null
-
               fun match {
                 case Select(qual, _) if isArrayClone(fun) && invokeStyle.isVirtual =>
                   val targetTypeKind = tpeTK(qual)
@@ -795,17 +796,17 @@ trait BCodeBodyBuilder extends BCodeSkelBuilder {
                   generatedType = targetTypeKind
 
                 case Select(qual, _) =>
-                  val qualSym = findHostClass(qual.tpe, sym)
 
-                  hostClass = qualSym
+                  // In "a couple cases", squirrel away a extra information (hostClass, targetTypeKind). TODO Document what "in a couple cases" refers to.
+                  val qualSym = findHostClass(qual.tpe, sym)
                   if (qual.tpe.typeSymbol != qualSym) {
-                      log(s"Precisified host class for $sym from ${qual.tpe.typeSymbol.fullName} to ${qualSym.fullName}")
-                    }
-                  genCallMethod(sym, invokeStyle, hostClass, app.pos)
+                    log(s"Precisified host class for $sym from ${qual.tpe.typeSymbol.fullName} to ${qualSym.fullName}")
+                  }
+                  genCallMethod(sym, invokeStyle, qualSym, app.pos)
                   generatedType = asmMethodType(sym).returnType
 
                 case _ =>
-                  genCallMethod(sym, invokeStyle, hostClass, app.pos)
+                  genCallMethod(sym, invokeStyle, pos = app.pos)
                   generatedType = asmMethodType(sym).returnType
 
               }
@@ -1158,7 +1159,7 @@ trait BCodeBodyBuilder extends BCodeSkelBuilder {
       // the type of the method owner
       val useMethodOwner = (
            !style.isVirtual
-        || hostSymbol.isBottomClass
+        || (hostSymbol.isBottomClass && !method.owner.hasJavaPackageAccessFlag)
         || methodOwner == ObjectClass
       )
       val receiver = if (useMethodOwner) methodOwner else hostSymbol

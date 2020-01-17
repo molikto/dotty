@@ -501,6 +501,7 @@ abstract class BackendInterface extends BackendInterfaceDefinitions {
     def isDeprecated: Boolean
     def isMutable: Boolean
     def hasAbstractFlag: Boolean
+    def hasJavaPackageAccessFlag: Boolean
     def hasModuleFlag: Boolean
     def isSynchronized: Boolean
     def isNonBottomSubClass(sym: Symbol): Boolean

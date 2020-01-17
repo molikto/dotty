@@ -412,6 +412,7 @@ object JavaParsers {
             val privateWithin: TypeName =
               if (isPackageAccess && !inInterface) thisPackageName
               else tpnme.EMPTY
+            if (isPackageAccess) flags |= Flags.JavaPackageAccess
 
             return Modifiers(flags, privateWithin) withAnnotations annots.toList
         }

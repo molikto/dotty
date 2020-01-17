@@ -119,7 +119,7 @@ class ClassfileParser(
   def parseClass()(implicit ctx: Context): Option[Embedded] = {
     val jflags       = in.nextChar
     val isAnnotation = hasAnnotation(jflags)
-    val sflags       = classTranslation.flags(jflags)
+    var sflags       = classTranslation.flags(jflags) | (if ((jflags & JAVA_ACC_PUBLIC) == 0) Flags.JavaPackageAccess else Flags.EmptyFlags)
     val isEnum       = (jflags & JAVA_ACC_ENUM) != 0
     val nameIdx      = in.nextChar
     currentClassName = pool.getClassName(nameIdx)
@@ -228,7 +228,7 @@ class ClassfileParser(
       if (method) Flags.Method | methodTranslation.flags(jflags)
       else fieldTranslation.flags(jflags)
     val name = pool.getName(in.nextChar)
-    if (!sflags.is(Flags.Private) || name == nme.CONSTRUCTOR) {
+    if (!sflags.isOneOf(Flags.Private | Flags.Bridge) || name == nme.CONSTRUCTOR) {
       val member = ctx.newSymbol(
         getOwner(jflags), name, sflags, memberCompleter,
         getPrivateWithin(jflags), coord = start)
