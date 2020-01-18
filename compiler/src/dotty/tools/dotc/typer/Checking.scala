@@ -50,8 +50,7 @@ object Checking {
   def checkBounds(args: List[tpd.Tree], boundss: List[TypeBounds], instantiate: (Type, List[Type]) => Type, app: Type = NoType)(implicit ctx: Context): Unit = {
     args.lazyZip(boundss).foreach { (arg, bound) =>
       if (!bound.isLambdaSub && !arg.tpe.hasSimpleKind)
-        // see MissingTypeParameterFor
-        ctx.error(ex"missing type parameter(s) for $arg", arg.sourcePos)
+        errorTree(arg, MissingTypeParameterInTypeApp(arg.tpe))
     }
     for ((arg, which, bound) <- ctx.boundsViolations(args, boundss, instantiate, app))
       ctx.error(
@@ -644,7 +643,7 @@ trait Checking {
             recur(pat1, pt)
           case UnApply(fn, _, pats) =>
             check(pat, pt) &&
-            (isIrrefutableUnapply(fn) || fail(pat, pt)) && {
+            (isIrrefutableUnapply(fn, pats.length) || fail(pat, pt)) && {
               val argPts = unapplyArgs(fn.tpe.widen.finalResultType, fn, pats, pat.sourcePos)
               pats.corresponds(argPts)(recur)
             }
@@ -836,10 +835,13 @@ trait Checking {
             def isCaseObject(sym: Symbol): Boolean =
               // TODO add alias to Nil in scala package
               sym.is(Case) && sym.is(Module)
+            def isStaticEnumCase(sym: Symbol): Boolean =
+              sym.is(Enum) && sym.is(JavaStatic) && sym.is(Case)
             val allow =
               ctx.erasedTypes ||
               ctx.inInlineMethod ||
               (tree.symbol.isStatic && isCaseObject(tree.symbol) || isCaseClassApply(tree.symbol)) ||
+              isStaticEnumCase(tree.symbol) ||
               isCaseClassNew(tree.symbol)
 
             if (!allow) ctx.error(em"$what must be a known value", tree.sourcePos)
@@ -937,6 +939,11 @@ trait Checking {
         // needed to make pos/java-interop/t1196 work.
       errorTree(tpt, MissingTypeParameterFor(tpt.tpe))
     else tpt
+
+  /** Check that the signature of the class mamber does not return a repeated parameter type */
+  def checkSignatureRepeatedParam(sym: Symbol)(implicit ctx: Context): Unit =
+    if (!sym.isOneOf(Synthetic | InlineProxy | Param) && sym.info.finalResultType.isRepeatedParam)
+      ctx.error(em"Cannot return repeated parameter type ${sym.info.finalResultType}", sym.sourcePos)
 
   /** Verify classes extending AnyVal meet the requirements */
   def checkDerivedValueClass(clazz: Symbol, stats: List[Tree])(implicit ctx: Context): Unit =

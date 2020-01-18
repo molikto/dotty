@@ -3,6 +3,9 @@ layout: doc-page
 title: "Extension Methods"
 ---
 
+**Note:** The syntax of extension methods is about to change. Here is the
+[doc page with the new syntax](./extension-methods-new.html), supported from Dotty 0.22 onwards.
+
 Extension methods allow one to add methods to a type after the type is defined. Example:
 
 ```scala

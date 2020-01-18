@@ -6,11 +6,11 @@ title: "Macros"
 ### Macros: Quotes and Splices
 
 Macros are built on two well-known fundamental operations: quotation and
-splicing.  Quotation is expressed as `'{...}` for expressions (both forms are
-equivalent) and as `'[...]` for types. Splicing is expressed as `${ ... }`.
-Additionally, within a quote or a splice we can quote or splice identifiers
-directly (i.e. `'e` and `$e`). Readers may notice the resemblance of the two
-aforementioned syntactic schemes with the familiar string interpolation syntax.
+splicing.  Quotation is expressed as `'{...}` for expressions and as `'[...]`
+for types. Splicing is expressed as `${ ... }`. Additionally, within a quote
+or a splice we can quote or splice identifiers directly (i.e. `'e` and `$e`).
+Readers may notice the resemblance of the two aforementioned syntactic
+schemes with the familiar string interpolation syntax.
 
 ```scala
 println(s"Hello, $name, here is the result of 1 + 1 = ${1 + 1}")
@@ -190,7 +190,7 @@ would be rewritten to
 def reflect[T: Type, U: Type](f: Expr[T] => Expr[U]): Expr[T => U] =
   '{ (x: ${ summon[Type[T]] }) => ${ f('x) } }
 ```
-The `the` query succeeds because there is a given instance of
+The `summon` query succeeds because there is a given instance of
 type `Type[T]` available (namely the given parameter corresponding
 to the context bound `: Type`), and the reference to that value is
 phase-correct. If that was not the case, the phase inconsistency for
@@ -707,7 +707,7 @@ This might be used to then perform an implicit search as in:
 
 
 ```scala
-inline def (sc: StringContext) showMe(args: =>Any*): String = ${ showMeExpr('sc, 'args) }
+inline def (sc: StringContext).showMe(args: =>Any*): String = ${ showMeExpr('sc, 'args) }
 
 private def showMeExpr(sc: Expr[StringContext], argsExpr: Expr[Seq[Any]])(given qctx: QuoteContext): Expr[String] = {
   argsExpr match {

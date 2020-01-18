@@ -188,7 +188,7 @@ object Parsers {
 /* -------------- TOKEN CLASSES ------------------------------------------- */
 
     def isIdent = in.isIdent
-    def isIdent(name: Name) = in.token == IDENTIFIER && in.name == name
+    def isIdent(name: Name) = in.isIdent(name)
     def isSimpleLiteral = simpleLiteralTokens contains in.token
     def isLiteral = literalTokens contains in.token
     def isNumericLit = numericLitTokens contains in.token
@@ -216,10 +216,11 @@ object Parsers {
       in.canStartExprTokens.contains(in.token) && !in.isSoftModifierInModifierPosition
 
     def isDefIntro(allowedMods: BitSet, excludedSoftModifiers: Set[TermName] = Set.empty): Boolean =
-      in.token == AT ||
-      (defIntroTokens `contains` in.token) ||
-      (allowedMods `contains` in.token) ||
-      in.isSoftModifierInModifierPosition && !excludedSoftModifiers.contains(in.name)
+      in.token == AT
+      || defIntroTokens.contains(in.token)
+      || allowedMods.contains(in.token)
+      || in.isSoftModifierInModifierPosition && !excludedSoftModifiers.contains(in.name)
+      || isIdent(nme.extension) && followingIsExtension()
 
     def isStatSep: Boolean = in.isNewLine || in.token == SEMI
 
@@ -912,7 +913,10 @@ object Parsers {
           lookahead.nextToken()
         if lookahead.token == IDENTIFIER then
           lookahead.nextToken()
-          lookahead.token == COLON
+          if lookahead.token == COLON then
+            lookahead.nextToken()
+            !lookahead.isAfterLineEnd
+          else false
         else false
       else false
 
@@ -942,7 +946,17 @@ object Parsers {
         lookahead.nextToken()
       while lookahead.token == LPAREN || lookahead.token == LBRACKET do
         lookahead.skipParens()
-      lookahead.token == COLON || lookahead.token == SUBTYPE
+      if lookahead.token == COLON then
+        lookahead.nextToken()
+        !lookahead.isAfterLineEnd
+      else lookahead.token == SUBTYPE
+
+    def followingIsExtension() =
+      val lookahead = in.LookaheadScanner()
+      lookahead.nextToken()
+      if lookahead.isIdent && !lookahead.isIdent(nme.on) then
+        lookahead.nextToken()
+      lookahead.isIdent(nme.on)
 
 /* --------- OPERAND/OPERATOR STACK --------------------------------------- */
 
@@ -1296,7 +1310,12 @@ object Parsers {
     }
 
     def possibleTemplateStart(isNew: Boolean = false): Unit =
-      if in.token == WITH then
+      in.observeColonEOL()
+      if in.token == COLONEOL then
+        in.nextToken()
+        if in.token != INDENT then
+          syntaxError(i"indented definitions expected")
+      else if in.token == WITH then
         in.nextToken()
         if in.token != LBRACE && in.token != INDENT then
           syntaxError(i"indented definitions or `{` expected")
@@ -1423,9 +1442,9 @@ object Parsers {
         case FORSOME => syntaxError(ExistentialTypesNoLongerSupported()); t
         case _ =>
           if (imods.isOneOf(GivenOrImplicit) && !t.isInstanceOf[FunctionWithMods])
-            syntaxError("Types with implicit keyword can only be function types `implicit (...) => ...`", implicitKwPos(start))
+            syntaxError(ImplicitTypesCanOnlyBeFunctionTypes(), implicitKwPos(start))
           if (imods.is(Erased) && !t.isInstanceOf[FunctionWithMods])
-            syntaxError("Types with erased keyword can only be function types `erased (...) => ...`", implicitKwPos(start))
+            syntaxError(ErasedTypesCanOnlyBeFunctionTypes(), implicitKwPos(start))
           t
       }
     }
@@ -1450,7 +1469,7 @@ object Parsers {
     def infixTypeRest(t: Tree): Tree =
       infixOps(t, canStartTypeTokens, refinedType, isType = true, isOperator = !isPostfixStar)
 
-    /** RefinedType   ::=  WithType {[nl | `with'] Refinement}
+    /** RefinedType   ::=  WithType {[nl] Refinement}
      */
     val refinedType: () => Tree = () => refinedTypeRest(withType())
 
@@ -2074,7 +2093,8 @@ object Parsers {
       }
       else simpleExpr()
 
-    /** SimpleExpr    ::= ‘new’ (ConstrApp [[‘with’] TemplateBody] | TemplateBody)
+    /** SimpleExpr    ::= ‘new’ ConstrApp {`with` ConstrApp} [TemplateBody]
+     *                 |  ‘new’ TemplateBody
      *                 |  BlockExpr
      *                 |  ‘$’ ‘{’ Block ‘}’
      *                 |  Quoted
@@ -2169,7 +2189,7 @@ object Parsers {
       }
     }
 
-    /** SimpleExpr    ::=  ‘new’ ConstrApp {`with` ConstrApp} [[‘with’] TemplateBody]
+    /** SimpleExpr    ::=  ‘new’ ConstrApp {`with` ConstrApp} [TemplateBody]
      *                  |  ‘new’ TemplateBody
      */
     def newExpr(): Tree =
@@ -3105,7 +3125,7 @@ object Parsers {
      *            |  this ParamClause ParamClauses `=' ConstrExpr
      *  DefDcl  ::=  DefSig `:' Type
      *  DefSig  ::=  id [DefTypeParamClause] DefParamClauses
-     *            |  ExtParamClause [nl] id DefParamClauses
+     *            |  ExtParamClause [nl] [‘.’] id DefParamClauses
      */
     def defDefOrDcl(start: Offset, mods: Modifiers): Tree = atSpan(start, nameStart) {
       def scala2ProcedureSyntax(resultTypeStr: String) = {
@@ -3134,7 +3154,11 @@ object Parsers {
         makeConstructor(Nil, vparamss, rhs).withMods(mods).setComment(in.getDocComment(start))
       }
       else {
-        def extParamss() = try paramClause(0, prefix = true) :: Nil finally newLineOpt()
+        def extParamss() =
+          try paramClause(0, prefix = true) :: Nil
+          finally
+            if in.token == DOT then in.nextToken()
+            else newLineOpt()
         val (leadingTparams, leadingVparamss, flags) =
           if in.token == LBRACKET then
             (typeParamClause(ParamOwner.Def), extParamss(), Method | Extension)
@@ -3271,6 +3295,7 @@ object Parsers {
      *            |  [‘case’] ‘object’ ObjectDef
      *            |  ‘enum’ EnumDef
      *            |  ‘given’ GivenDef
+     *            |  ‘extension’ ExtensionDef
      */
     def tmplDef(start: Int, mods: Modifiers): Tree =
       in.token match {
@@ -3289,8 +3314,11 @@ object Parsers {
         case GIVEN =>
           givenDef(start, mods, atSpan(in.skipToken()) { Mod.Given() })
         case _ =>
-          syntaxErrorOrIncomplete(ExpectedStartOfTopLevelDefinition())
-          EmptyTree
+          if isIdent(nme.extension) && followingIsExtension() then
+            extensionDef(start, mods)
+          else
+            syntaxErrorOrIncomplete(ExpectedStartOfTopLevelDefinition())
+            EmptyTree
       }
 
     /** ClassDef ::= id ClassConstr TemplateOpt
@@ -3336,7 +3364,7 @@ object Parsers {
         syntaxError(s"Only access modifiers are allowed on enum $where")
       mods1
 
-    /**  EnumDef ::=  id ClassConstr InheritClauses [‘with’] EnumBody
+    /**  EnumDef ::=  id ClassConstr InheritClauses EnumBody
      */
     def enumDef(start: Offset, mods: Modifiers): TypeDef = atSpan(start, nameStart) {
       val mods1 = checkAccessOnly(mods, "definitions")
@@ -3399,8 +3427,7 @@ object Parsers {
     }
 
     /** GivenDef       ::=  [GivenSig (‘:’ | <:)] {FunArgTypes ‘=>’} AnnotType ‘=’ Expr
-     *                   |  [GivenSig ‘:’] {FunArgTypes ‘=>’} ConstrApps [[‘with’] TemplateBody]
-     *                   |  [id ‘:’] ExtParamClause {GivenParamClause} ‘extended’ ‘with’ ExtMethods
+     *                   |  [GivenSig ‘:’] {FunArgTypes ‘=>’} ConstrApps [TemplateBody]
      *  GivenSig       ::=  [id] [DefTypeParamClause] {GivenParamClause}
      *  ExtParamClause ::=  [DefTypeParamClause] DefParamClause
      *  ExtMethods     ::=  [nl] ‘{’ ‘def’ DefDef {semi ‘def’ DefDef} ‘}’
@@ -3442,81 +3469,83 @@ object Parsers {
             if in.token == LPAREN && followingIsParamOrGivenType()
             then paramClauses() // todo: ONLY admit a single paramClause
             else Nil
-          val isExtension = isIdent(nme.extended)
           def checkAllGivens(vparamss: List[List[ValDef]], what: String) =
             vparamss.foreach(_.foreach(vparam =>
               if !vparam.mods.is(Given) then syntaxError(em"$what must be `given`", vparam.span)))
-          if isExtension then
-            if !name.isEmpty && !hasLabel then
-              syntaxError(em"name $name of extension clause must be followed by `:`", nameStart)
-            vparamss match
-              case (vparam :: Nil) :: vparamss1 if !vparam.mods.is(Given) =>
-                checkAllGivens(vparamss1, "follow-on parameter in extension clause")
-              case _ =>
-                syntaxError("extension clause must start with a single regular parameter", paramsStart)
-            in.nextToken()
-            accept(WITH)
-            val (self, stats) = templateBody()
-            stats.foreach(checkExtensionMethod(tparams, _))
-            ModuleDef(name, Template(makeConstructor(tparams, vparamss), Nil, Nil, self, stats))
-          else
-            def makeGiven(params: List[ValDef]): List[ValDef] =
-              params.map(param => param.withMods(param.mods | Given))
-            def conditionalParents(): List[Tree] =
-              accept(ARROW)
-              if in.token == LPAREN && followingIsParam() then
-                vparamss = vparamss :+ makeGiven(paramClause(vparamss.flatten.length))
-                conditionalParents()
-              else
-                val constrs = constrApps(commaOK = true, templateCanFollow = true)
-                if in.token == ARROW && constrs.forall(_.isType) then
-                  vparamss = vparamss
-                    :+ typesToGivenParams(constrs, ofClass = false, vparamss.flatten.length)
-                  conditionalParents()
-                else constrs
-
-            val isConditional =
-              in.token == ARROW
-              && vparamss.length == 1
-              && (hasLabel || name.isEmpty && tparams.isEmpty)
-            if !isConditional then checkAllGivens(vparamss, "parameter of given instance")
-            val parents =
-              if in.token == SUBTYPE && !hasLabel then
-                if !mods.is(Inline) then
-                  syntaxError("`<:` is only allowed for given with `inline` modifier")
-                in.nextToken()
-                TypeBoundsTree(EmptyTree, annotType()) :: Nil
-              else if isConditional then
-                vparamss = vparamss.map(makeGiven)
-                conditionalParents()
-              else
-                if !hasLabel && !(name.isEmpty && tparams.isEmpty && vparamss.isEmpty) then
-                  accept(COLON)
-                val constrs = constrApps(commaOK = true, templateCanFollow = true)
-                if in.token == ARROW && vparamss.isEmpty && constrs.forall(_.isType) then
-                  vparamss = typesToGivenParams(constrs, ofClass = false, 0) :: Nil
-                  conditionalParents()
-                else
-                  constrs
-
-            if in.token == EQUALS && parents.length == 1 && parents.head.isType then
-              in.nextToken()
-              mods1 |= Final
-              DefDef(name, tparams, vparamss, parents.head, subExpr())
+          def makeGiven(params: List[ValDef]): List[ValDef] =
+            params.map(param => param.withMods(param.mods | Given))
+          def conditionalParents(): List[Tree] =
+            accept(ARROW)
+            if in.token == LPAREN && followingIsParam() then
+              vparamss = vparamss :+ makeGiven(paramClause(vparamss.flatten.length))
+              conditionalParents()
             else
-              parents match
-                case TypeBoundsTree(_, _) :: _ => syntaxError("`=` expected")
-                case _ =>
-              possibleTemplateStart()
-              val tparams1 = tparams.map(tparam => tparam.withMods(tparam.mods | PrivateLocal))
-              val vparamss1 = vparamss.map(_.map(vparam =>
-                vparam.withMods(vparam.mods &~ Param | ParamAccessor | PrivateLocal)))
-              val templ = templateBodyOpt(makeConstructor(tparams1, vparamss1), parents, Nil)
-              if tparams.isEmpty && vparamss.isEmpty then ModuleDef(name, templ)
-              else TypeDef(name.toTypeName, templ)
+              val constrs = constrApps(commaOK = true, templateCanFollow = true)
+              if in.token == ARROW && constrs.forall(_.isType) then
+                vparamss = vparamss
+                  :+ typesToGivenParams(constrs, ofClass = false, vparamss.flatten.length)
+                conditionalParents()
+              else constrs
+
+          val isConditional =
+            in.token == ARROW
+            && vparamss.length == 1
+            && (hasLabel || name.isEmpty && tparams.isEmpty)
+          if !isConditional then checkAllGivens(vparamss, "parameter of given instance")
+          val parents =
+            if in.token == SUBTYPE && !hasLabel then
+              if !mods.is(Inline) then
+                syntaxError("`<:` is only allowed for given with `inline` modifier")
+              in.nextToken()
+              TypeBoundsTree(EmptyTree, annotType()) :: Nil
+            else if isConditional then
+              vparamss = vparamss.map(makeGiven)
+              conditionalParents()
+            else
+              if !hasLabel && !(name.isEmpty && tparams.isEmpty && vparamss.isEmpty) then
+                accept(COLON)
+              val constrs = constrApps(commaOK = true, templateCanFollow = true)
+              if in.token == ARROW && vparamss.isEmpty && constrs.forall(_.isType) then
+                vparamss = typesToGivenParams(constrs, ofClass = false, 0) :: Nil
+                conditionalParents()
+              else
+                constrs
+
+          if in.token == EQUALS && parents.length == 1 && parents.head.isType then
+            in.nextToken()
+            mods1 |= Final
+            DefDef(name, tparams, vparamss, parents.head, subExpr())
+          else
+            parents match
+              case TypeBoundsTree(_, _) :: _ => syntaxError("`=` expected")
+              case _ =>
+            possibleTemplateStart()
+            val tparams1 = tparams.map(tparam => tparam.withMods(tparam.mods | PrivateLocal))
+            val vparamss1 = vparamss.map(_.map(vparam =>
+              vparam.withMods(vparam.mods &~ Param | ParamAccessor | PrivateLocal)))
+            val templ = templateBodyOpt(makeConstructor(tparams1, vparamss1), parents, Nil)
+            if tparams.isEmpty && vparamss.isEmpty then ModuleDef(name, templ)
+            else TypeDef(name.toTypeName, templ)
         }
       finalizeDef(gdef, mods1, start)
     }
+
+    /** ExtensionDef  ::=  [id] ‘on’ ExtParamClause {GivenParamClause} ExtMethods
+     */
+    def extensionDef(start: Offset, mods: Modifiers): ModuleDef =
+      in.nextToken()
+      val name = if isIdent && !isIdent(nme.on) then ident() else EmptyTermName
+      if !isIdent(nme.on) then syntaxErrorOrIncomplete("`on` expected")
+      if isIdent(nme.on) then in.nextToken()
+      val tparams = typeParamClauseOpt(ParamOwner.Def)
+      val extParams = paramClause(0, prefix = true)
+      val givenParamss = paramClauses(givenOnly = true)
+      possibleTemplateStart()
+      if !in.isNestedStart then syntaxError("Extension without extension methods")
+      val templ = templateBodyOpt(makeConstructor(tparams, extParams :: givenParamss), Nil, Nil)
+      templ.body.foreach(checkExtensionMethod(tparams, _))
+      val edef = ModuleDef(name, templ)
+      finalizeDef(edef, addFlag(mods, Given), start)
 
 /* -------- TEMPLATES ------------------------------------------- */
 
@@ -3547,7 +3576,7 @@ object Parsers {
         else Nil
       t :: ts
 
-    /** Template          ::=  InheritClauses [[‘with’] TemplateBody]
+    /** Template          ::=  InheritClauses [TemplateBody]
      *  InheritClauses    ::=  [‘extends’ ConstrApps] [‘derives’ QualId {‘,’ QualId}]
      */
     def template(constr: DefDef, isEnum: Boolean = false): Template = {
@@ -3617,7 +3646,7 @@ object Parsers {
       case x: RefTree => atSpan(start, pointOffset(pkg))(PackageDef(x, stats))
     }
 
-    /** Packaging ::= package QualId [nl | `with'] `{' TopStatSeq `}'
+    /** Packaging ::= package QualId [nl] `{' TopStatSeq `}'
      */
     def packaging(start: Int): Tree = {
       val pkg = qualId()
@@ -3677,7 +3706,7 @@ object Parsers {
     def templateStatSeq(): (ValDef, List[Tree]) = checkNoEscapingPlaceholders {
       var self: ValDef = EmptyValDef
       val stats = new ListBuffer[Tree]
-      if (isExprIntro) {
+      if (isExprIntro && !isDefIntro(modifierTokens)) {
         val first = expr1()
         if (in.token == ARROW) {
           first match {
@@ -3703,10 +3732,10 @@ object Parsers {
           stats ++= importClause(IMPORT, Import)
         else if (in.token == EXPORT)
           stats ++= importClause(EXPORT, Export.apply)
-        else if (isExprIntro)
-          stats += expr1()
         else if (isDefIntro(modifierTokensOrCase))
           stats +++= defOrDcl(in.offset, defAnnotsMods(modifierTokens))
+        else if (isExprIntro)
+          stats += expr1()
         else if (!isStatSep) {
           exitOnError = mustStartStat
           syntaxErrorOrIncomplete("illegal start of definition")

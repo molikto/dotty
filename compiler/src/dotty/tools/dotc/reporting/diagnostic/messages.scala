@@ -1457,6 +1457,15 @@ object messages {
     val explanation: String = ""
   }
 
+  case class MissingTypeParameterInTypeApp(tpe: Type)(implicit ctx: Context)
+    extends Message(MissingTypeParameterInTypeAppID) {
+    val numParams = tpe.typeParams.length
+    val parameters = if (numParams == 1) "parameter" else "parameters"
+    val msg: String = em"Missing type $parameters for $tpe"
+    val kind: String = "Type Mismatch"
+    val explanation: String = em"A fully applied type is expected but $tpe takes $numParams $parameters."
+  }
+
   case class DoesNotConformToBound(tpe: Type, which: String, bound: Type)(
     err: Errors)(implicit ctx: Context)
     extends Message(DoesNotConformToBoundID) {
@@ -2372,4 +2381,30 @@ object messages {
       val msg: String = i"illegal cyclic type reference: ${where} ${hl(lastChecked.show)} of $sym refers back to the type itself"
       val explanation: String = ""
     }
+
+  case class ImplicitTypesCanOnlyBeFunctionTypes()(implicit val ctx: Context)
+    extends Message(ImplicitTypesCanOnlyBeFunctionTypesID) {
+    val kind: String = "Syntax"
+    val msg: String = "Types with given keyword can only be function types `given (...) => ...`"
+    val explanation: String = ""
+  }
+
+  case class ErasedTypesCanOnlyBeFunctionTypes()(implicit val ctx: Context)
+    extends Message(ErasedTypesCanOnlyBeFunctionTypesID) {
+    val kind: String = "Syntax"
+    val msg: String = "Types with erased keyword can only be function types `erased (...) => ...`"
+    val explanation: String = ""
+  }
+
+  case class CaseClassMissingNonImplicitParamList(cdef: untpd.TypeDef)(implicit ctx: Context)
+    extends Message(CaseClassMissingNonImplicitParamListID) {
+    val kind: String = "Syntax"
+    val msg: String =
+      em"""|A ${hl("case class")} must have at least one non-implicit parameter list"""
+
+    val explanation: String =
+      em"""|${cdef.name} must have at least one non-implicit parameter list,
+           | if you're aiming to have a case class parametrized only by implicit ones, you should
+           | add an explicit ${hl("()")} as a parameter list to ${cdef.name}.""".stripMargin
+  }
 }

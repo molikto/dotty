@@ -1099,16 +1099,20 @@ class Typer extends Namer
             pt match {
               case SAMType(sam)
               if !defn.isFunctionType(pt) && mt <:< sam =>
+                // SAMs of the form C[?] where C is a class cannot be conversion targets.
+                // The resulting class `class $anon extends C[?] {...}` would be illegal,
+                // since type arguments to `C`'s super constructor cannot be constructed.
+                def isWildcardClassSAM =
+                  !pt.classSymbol.is(Trait) && pt.argInfos.exists(_.isInstanceOf[TypeBounds])
                 val targetTpe =
-                  if (!isFullyDefined(pt, ForceDegree.all))
-                    if (pt.isRef(defn.PartialFunctionClass))
-                      // Replace the underspecified expected type by one based on the closure method type
-                      defn.PartialFunctionOf(mt.firstParamTypes.head, mt.resultType)
-                    else {
-                      ctx.error(ex"result type of lambda is an underspecified SAM type $pt", tree.sourcePos)
-                      pt
-                    }
-                  else pt
+                  if isFullyDefined(pt, ForceDegree.all) && !isWildcardClassSAM then
+                    pt
+                  else if pt.isRef(defn.PartialFunctionClass) then
+                    // Replace the underspecified expected type by one based on the closure method type
+                    defn.PartialFunctionOf(mt.firstParamTypes.head, mt.resultType)
+                  else
+                    ctx.error(ex"result type of lambda is an underspecified SAM type $pt", tree.sourcePos)
+                    pt
                 if (pt.classSymbol.isOneOf(FinalOrSealed)) {
                   val offendingFlag = pt.classSymbol.flags & FinalOrSealed
                   ctx.error(ex"lambda cannot implement $offendingFlag ${pt.classSymbol}", tree.sourcePos)
@@ -1541,7 +1545,7 @@ class Typer extends Namer
         var name = tree.name
         if (name == nme.WILDCARD && tree.mods.is(Given)) {
           val Typed(_, tpt): @unchecked = tree.body
-          name = desugar.inventGivenName(tpt)
+          name = desugar.inventGivenOrExtensionName(tpt)
         }
         if (name == nme.WILDCARD) body1
         else {
@@ -1609,6 +1613,7 @@ class Typer extends Namer
       case rhs => typedExpr(rhs, tpt1.tpe.widenExpr)
     }
     val vdef1 = assignType(cpy.ValDef(vdef)(name, tpt1, rhs1), sym)
+    checkSignatureRepeatedParam(sym)
     if (sym.is(Inline, butNot = DeferredOrTermParamOrAccessor))
       checkInlineConformant(rhs1, isFinal = sym.is(Final), em"right-hand side of inline $sym")
     patchFinalVals(vdef1)
@@ -1694,7 +1699,9 @@ class Typer extends Namer
       checkThisConstrCall(rhs1)
     }
 
-    assignType(cpy.DefDef(ddef)(name, tparams1, vparamss1, tpt1, rhs1), sym).setDefTree
+    val ddef2 = assignType(cpy.DefDef(ddef)(name, tparams1, vparamss1, tpt1, rhs1), sym)
+    checkSignatureRepeatedParam(sym)
+    ddef2.setDefTree
       //todo: make sure dependent method types do not depend on implicits or by-name params
   }
 
@@ -2888,7 +2895,7 @@ class Typer extends Namer
               |To turn this error into a warning, pass -Xignore-scala2-macros to the compiler""".stripMargin, tree.sourcePos.startPos)
           tree
         }
-      else if (tree.tpe <:< pt) {
+      else if (tree.tpe.widenExpr <:< pt) {
         if (pt.hasAnnotation(defn.InlineParamAnnot))
           checkInlineConformant(tree, isFinal = false, "argument to inline parameter")
         if (ctx.typeComparer.GADTused && pt.isValueType)
